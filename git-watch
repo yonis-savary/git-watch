@@ -9,7 +9,7 @@
 # ░██         ░██    ░██ ░██    ░██  ░██    ░██ ░██       ░██  ░██   ░██
 # ░██         ░██    ░██ ░██     ░██ ░██    ░██ ░██       ░██   ░██████
 
-OPTS=$(getopt -o f:run:o:s:p:b:ch --long file:,runner,uninstall,name:,output:,sleep:,path:,branch:,command:,help -n'simple_getopt.sh' -- "$@")
+OPTS=$(getopt -o f:run:o:s:p:b:c:h --long file:,runner,uninstall,name:,output:,sleep:,path:,branch:,command:,help -n'simple_getopt.sh' -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Failed to read options"
@@ -17,10 +17,6 @@ if [ $? -ne 0 ]; then
 fi
 
 eval set -- "$OPTS"
-
-
-
-
 
 output_file="/dev/null"
 runtime_mode="launcher"
@@ -127,6 +123,36 @@ fi
 
 
 
+
+# ░██     ░██ ░███    ░██ ░██████░███    ░██   ░██████   ░██████████   ░███    ░██         ░██
+# ░██     ░██ ░████   ░██   ░██  ░████   ░██  ░██   ░██      ░██      ░██░██   ░██         ░██
+# ░██     ░██ ░██░██  ░██   ░██  ░██░██  ░██ ░██             ░██     ░██  ░██  ░██         ░██
+# ░██     ░██ ░██ ░██ ░██   ░██  ░██ ░██ ░██  ░████████      ░██    ░█████████ ░██         ░██
+# ░██     ░██ ░██  ░██░██   ░██  ░██  ░██░██         ░██     ░██    ░██    ░██ ░██         ░██
+#  ░██   ░██  ░██   ░████   ░██  ░██   ░████  ░██   ░██      ░██    ░██    ░██ ░██         ░██
+#   ░██████   ░██    ░███ ░██████░██    ░███   ░██████       ░██    ░██    ░██ ░██████████ ░██████████
+
+
+if [ "$runtime_mode" = "uninstall" ]; then
+    runner_pid=$(ps aux | grep "$runner_name" | grep runner --color=never | awk '{print $2}')
+    if [ -z "$runner_pid" ]; then
+        echo "No runner with $runner_name name found"
+        ps aux | grep "$runner_name"
+    else
+        echo "Killing process with PID $runner_pid"
+        kill -TERM $runner_pid
+    fi
+    exit 0
+fi
+
+
+
+
+
+
+
+
+
 if [ -z "$repo_path" ]; then
     echo "--path is a mandatory parameter, use --help for more"
     exit 1
@@ -135,7 +161,6 @@ if [ -z "$command" ]; then
     echo "--command is a mandatory parameter, use --help for more"
     exit 1
 fi
-
 
 
 
@@ -160,7 +185,9 @@ if [ "$runtime_mode" = "launcher" ]; then
 
     #Available: make  directory_hash="$(echo \"$URL\" | md5sum | cut -f1 -d' ' | cut -c 1-5)"
     echo "Launching git-watch runner with process name $runner_name..."
-    bash -c "exec -a \"$runner_name\" git-watch --runner --name $runner_name $@" >$output_file 2>&1 &
+    to_launch="exec -a \"$runner_name\" git-watch --runner --branch \"$branch\" --command \"$command\" --name \"$runner_name\" --output \"$output_file\" --path \"$repo_path\" --sleep \"$sleep_interval\""
+    echo "$to_launch"
+    bash -c "$to_launch" >>$output_file 2>&1 &
 
     runner_pid=$(ps aux | grep "$runner_name" | grep runner --color=never | awk '{print $2}')
     if [ -z "$runner_pid" ]; then
@@ -175,30 +202,6 @@ fi
 
 
 
-
-
-
-
-# ░██     ░██ ░███    ░██ ░██████░███    ░██   ░██████   ░██████████   ░███    ░██         ░██
-# ░██     ░██ ░████   ░██   ░██  ░████   ░██  ░██   ░██      ░██      ░██░██   ░██         ░██
-# ░██     ░██ ░██░██  ░██   ░██  ░██░██  ░██ ░██             ░██     ░██  ░██  ░██         ░██
-# ░██     ░██ ░██ ░██ ░██   ░██  ░██ ░██ ░██  ░████████      ░██    ░█████████ ░██         ░██
-# ░██     ░██ ░██  ░██░██   ░██  ░██  ░██░██         ░██     ░██    ░██    ░██ ░██         ░██
-#  ░██   ░██  ░██   ░████   ░██  ░██   ░████  ░██   ░██      ░██    ░██    ░██ ░██         ░██
-#   ░██████   ░██    ░███ ░██████░██    ░███   ░██████       ░██    ░██    ░██ ░██████████ ░██████████
-
-
-if [ "$runtime_mode" = "uninstall" ]; then
-    runner_pid=$(ps aux | grep "$runner_name" | grep runner --color=never | awk '{print $2}')
-    if [ -z "$runner_pid" ]; then
-        echo "No runner with $runner_name name found"
-        ps aux | grep "$runner_name"
-    else
-        echo "Killing process with PID $runner_pid"
-        kill -TERM $runner_pid
-    fi
-    exit 0
-fi
 
 
 
@@ -236,16 +239,16 @@ cleanup() {
 }
 
 run_routine() {
-    log info "Checking branch"
+    log info "Checking branch ($branch) in dir $(pwd)"
 
-    git fetch origin $branch --depth=1 >/dev/null 2>&1
+    git fetch origin $branch >/dev/null 2>&1
     local_commit=$(git rev-parse $branch)
     remote_commit=$(git rev-parse origin/$branch)
     if [ "$local_commit" != "$remote_commit" ]; then
       log info "Diff detected ($local_commit != $remote_commit), pulling and executing command"
       git pull origin $branch && eval "cd $repo_path && $command"
     else
-      log info "Nothing to do"
+      log info "Nothing to do (origin $remote_commit | local $local_commit)"
     fi
 }
 
@@ -254,6 +257,9 @@ killed_process="0"
 trap cleanup SIGTERM
 
 log info "Starting runner"
+
+log info "Changing directory to $repo_path"
+cd "$repo_path"
 
 while true; do
     run_routine
