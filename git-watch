@@ -1,0 +1,267 @@
+#!/bin/bash
+
+
+# ░█████████     ░███    ░█████████     ░███    ░███     ░███   ░██████
+# ░██     ░██   ░██░██   ░██     ░██   ░██░██   ░████   ░████  ░██   ░██
+# ░██     ░██  ░██  ░██  ░██     ░██  ░██  ░██  ░██░██ ░██░██ ░██
+# ░█████████  ░█████████ ░█████████  ░█████████ ░██ ░████ ░██  ░████████
+# ░██         ░██    ░██ ░██   ░██   ░██    ░██ ░██  ░██  ░██         ░██
+# ░██         ░██    ░██ ░██    ░██  ░██    ░██ ░██       ░██  ░██   ░██
+# ░██         ░██    ░██ ░██     ░██ ░██    ░██ ░██       ░██   ░██████
+
+OPTS=$(getopt -o f:run:o:s:p:b:ch --long file:,runner,uninstall,name:,output:,sleep:,path:,branch:,command:,help -n'simple_getopt.sh' -- "$@")
+
+if [ $? -ne 0 ]; then
+  echo "Failed to read options"
+  exit 1
+fi
+
+eval set -- "$OPTS"
+
+
+
+
+
+output_file="/dev/null"
+runtime_mode="launcher"
+runner_name="gw-$(basename $(pwd))"
+sleep_interval=600
+repo_path=$(realpath ".")
+branch="main"
+command=""
+
+for arg in "$@"; do
+    case "$arg" in
+        --runner|-r)
+            runtime_mode="runner"
+            shift
+        ;;
+        --uninstall|-u)
+            runtime_mode="uninstall"
+            shift
+        ;;
+        --name|-n)
+            shift
+            runner_name="$1"
+            shift
+        ;;
+        --output|-o)
+            shift
+            output_file="$1"
+            shift
+        ;;
+        --sleep|-s)
+            shift
+            sleep_interval="$1"
+            shift
+        ;;
+        --path|-p)
+            shift
+            repo_path=$(realpath "$1")
+            shift
+        ;;
+        --branch|-b)
+            shift
+            branch="$1"
+            shift
+        ;;
+        --command|-c)
+            shift
+            command="$1"
+            shift
+        ;;
+        --help|-h)
+            runtime_mode="help"
+            shift
+        ;;
+    esac
+done
+
+
+
+
+
+
+
+# ░██     ░██ ░██████████ ░██         ░█████████
+# ░██     ░██ ░██         ░██         ░██     ░██
+# ░██     ░██ ░██         ░██         ░██     ░██
+# ░██████████ ░█████████  ░██         ░█████████
+# ░██     ░██ ░██         ░██         ░██
+# ░██     ░██ ░██         ░██         ░██
+# ░██     ░██ ░██████████ ░██████████ ░██
+
+if [ "$runtime_mode" = "help" ]; then
+    echo "git-watch : git diff watcher for continuous deployment"
+    echo "Usage: git-watch [OPTIONS]"
+    echo ""
+    echo "Options":
+    echo "-b, --branch      Specify branch to look at"
+    echo "-c, --command     Command to execute when a change detected"
+    echo "-h, --help        Print this help message"
+    echo "-n, --name        Specify a name for the runner"
+    echo "-o, --output      Specify a log file (/dev/null by default)"
+    echo "-p, --path        Specify repository path (. by default)"
+    echo "-r, --runner      Run as standalone/runner mode"
+    echo "-s, --sleep       Specify waiting time (in seconds) between checks"
+    echo "-u, --uninstall   Kill any running runner for given name"
+    echo ""
+    echo "Examples"
+    echo "    git-watch --output ./watch.logs --command \"npm ci\"    "
+    echo "            Simplest usage, look for changes on main every minutes,"
+    echo "            pull changes and run npm ci if any (and put logs in watch.logs)"
+    echo ""
+    echo "    git-watch --main feature-branch --sleep 600 --command \"npm ci\""
+    echo "            Look for changes on feature-branch every 10 minutes,"
+    echo "            pull changes and run npm ci if any (no logs)"
+    echo ""
+    echo "    git-watch -u"
+    echo "            Kill the previously started git-watch runner"
+    echo ""
+    exit 0
+fi
+
+
+
+
+
+
+
+if [ -z "$repo_path" ]; then
+    echo "--path is a mandatory parameter, use --help for more"
+    exit 1
+fi
+if [ -z "$command" ]; then
+    echo "--command is a mandatory parameter, use --help for more"
+    exit 1
+fi
+
+
+
+
+
+
+
+# ░██            ░███    ░██     ░██ ░███    ░██   ░██████  ░██     ░██ ░██████████ ░█████████
+# ░██           ░██░██   ░██     ░██ ░████   ░██  ░██   ░██ ░██     ░██ ░██         ░██     ░██
+# ░██          ░██  ░██  ░██     ░██ ░██░██  ░██ ░██        ░██     ░██ ░██         ░██     ░██
+# ░██         ░█████████ ░██     ░██ ░██ ░██ ░██ ░██        ░██████████ ░█████████  ░█████████
+# ░██         ░██    ░██ ░██     ░██ ░██  ░██░██ ░██        ░██     ░██ ░██         ░██   ░██
+# ░██         ░██    ░██  ░██   ░██  ░██   ░████  ░██   ░██ ░██     ░██ ░██         ░██    ░██
+# ░██████████ ░██    ░██   ░██████   ░██    ░███   ░██████  ░██     ░██ ░██████████ ░██     ░██
+
+if [ "$runtime_mode" = "launcher" ]; then
+
+    runner_pid=$(ps aux | grep "$runner_name" | grep runner --color=never | awk '{print $2}')
+    if [ ! -z "$runner_pid" ]; then
+        echo "A runner with the name $runner_name already exists (PID $runner_pid)"
+        exit 1
+    fi
+
+    #Available: make  directory_hash="$(echo \"$URL\" | md5sum | cut -f1 -d' ' | cut -c 1-5)"
+    echo "Launching git-watch runner with process name $runner_name..."
+    bash -c "exec -a \"$runner_name\" git-watch --runner --name $runner_name $@" >$output_file 2>&1 &
+
+    runner_pid=$(ps aux | grep "$runner_name" | grep runner --color=never | awk '{print $2}')
+    if [ -z "$runner_pid" ]; then
+        echo "Started runner but could not resolve its PID"
+    else
+        echo "Started runner with PID $runner_pid"
+    fi
+
+    exit 0
+fi
+
+
+
+
+
+
+
+
+# ░██     ░██ ░███    ░██ ░██████░███    ░██   ░██████   ░██████████   ░███    ░██         ░██
+# ░██     ░██ ░████   ░██   ░██  ░████   ░██  ░██   ░██      ░██      ░██░██   ░██         ░██
+# ░██     ░██ ░██░██  ░██   ░██  ░██░██  ░██ ░██             ░██     ░██  ░██  ░██         ░██
+# ░██     ░██ ░██ ░██ ░██   ░██  ░██ ░██ ░██  ░████████      ░██    ░█████████ ░██         ░██
+# ░██     ░██ ░██  ░██░██   ░██  ░██  ░██░██         ░██     ░██    ░██    ░██ ░██         ░██
+#  ░██   ░██  ░██   ░████   ░██  ░██   ░████  ░██   ░██      ░██    ░██    ░██ ░██         ░██
+#   ░██████   ░██    ░███ ░██████░██    ░███   ░██████       ░██    ░██    ░██ ░██████████ ░██████████
+
+
+if [ "$runtime_mode" = "uninstall" ]; then
+    runner_pid=$(ps aux | grep "$runner_name" | grep runner --color=never | awk '{print $2}')
+    if [ -z "$runner_pid" ]; then
+        echo "No runner with $runner_name name found"
+        ps aux | grep "$runner_name"
+    else
+        echo "Killing process with PID $runner_pid"
+        kill -TERM $runner_pid
+    fi
+    exit 0
+fi
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ░█████████  ░██     ░██ ░███    ░██ ░███    ░██ ░██████████ ░█████████
+# ░██     ░██ ░██     ░██ ░████   ░██ ░████   ░██ ░██         ░██     ░██
+# ░██     ░██ ░██     ░██ ░██░██  ░██ ░██░██  ░██ ░██         ░██     ░██
+# ░█████████  ░██     ░██ ░██ ░██ ░██ ░██ ░██ ░██ ░█████████  ░█████████
+# ░██   ░██   ░██     ░██ ░██  ░██░██ ░██  ░██░██ ░██         ░██   ░██
+# ░██    ░██   ░██   ░██  ░██   ░████ ░██   ░████ ░██         ░██    ░██
+# ░██     ░██   ░██████   ░██    ░███ ░██    ░███ ░██████████ ░██     ░██
+
+
+log() {
+  local level="${1^^}"  # ex: info => INFO
+  shift
+  local timestamp
+  timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
+  echo "[$timestamp] [$runner_name] [$level] $*"
+}
+
+cleanup() {
+    killed_process="1"
+    log info "Recieved SIGTERM, cleaning the next time..."
+}
+
+run_routine() {
+    log info "Checking branch"
+
+    git fetch origin $branch --depth=1 >/dev/null 2>&1
+    local_commit=$(git rev-parse $branch)
+    remote_commit=$(git rev-parse origin/$branch)
+    if [ "$local_commit" != "$remote_commit" ]; then
+      log info "Diff detected ($local_commit != $remote_commit), pulling and executing command"
+      git pull origin $branch && eval "cd $repo_path && $command"
+    else
+      log info "Nothing to do"
+    fi
+}
+
+
+killed_process="0"
+trap cleanup SIGTERM
+
+log info "Starting runner"
+
+while true; do
+    run_routine
+
+    [ "$killed_process" = "1" ] && log info "Shutting down" && exit 0
+
+    sleep $sleep_interval
+
+    [ "$killed_process" = "1" ] && log info "Shutting down" && exit 0
+done
+exit 0
